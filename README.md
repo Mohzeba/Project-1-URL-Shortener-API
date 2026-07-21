@@ -21,7 +21,7 @@ A backend API that shortens URLs and tracks click analytics, built with FastAPI,
 ## Running locally
 
 ```bash
-git clone <your-repo-url>
+git clone <https://github.com/Mohzeba/Project-1-URL-Shortener-API.git>
 cd url-shortener-api
 docker compose up --build
 ```
