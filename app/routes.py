@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import URL
 from typing import Optional
+from pydantic import BaseModel
 import redis
 import os
 
@@ -12,23 +13,30 @@ redis_client = redis.Redis.from_url(os.getenv("REDIS_URL"), decode_responses=Tru
 
 router = APIRouter()
 
+class ShortenRequest(BaseModel):
+    long_url: str
+    custom_code: Optional[str] = None
+
 def generate_short_code(length=6):
     characters = string.ascii_letters + string.digits
     return "".join(random.choice(characters) for _ in range(length))
 
 @router.post("/shorten")
-def shorten_url(long_url: str, custom_code: str = None, db: Session = Depends(get_db)):
-    short_code = custom_code if custom_code else generate_short_code()
+def shorten_url(request: ShortenRequest, db: Session = Depends(get_db)):
+    if not request.long_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="long_url must start with http:// or https://")
+
+    short_code = request.custom_code if request.custom_code else generate_short_code()
 
     existing = db.query(URL).filter(URL.short_code == short_code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Short code already exists")
 
-    new_url = URL(long_url = long_url, short_code = short_code)
+    new_url = URL(long_url=request.long_url, short_code=short_code)
     db.add(new_url)
     db.commit()
     db.refresh(new_url)
-    return {"short_code": short_code, "long_url": long_url}
+    return {"short_code": short_code, "long_url": request.long_url}
 
 @router.get("/urls")
 def list_urls(db: Session = Depends(get_db)):
@@ -53,19 +61,19 @@ def redirect_url(short_code: str, db: Session = Depends(get_db)):
         db.query(URL).filter(URL.short_code == short_code).update(
             {URL.click_count: URL.click_count + 1}
         )
-        db.commit
+        db.commit()
         return {"long_url": cached_url, "source": "cache"}
     
     url_entry = db.query(URL).filter(URL.short_code == short_code).first()
     if not url_entry:
-        raise HTTPException(status_code=404, detail= "URL not found")
+        raise HTTPException(status_code=404, detail="URL not found")
     
     url_entry.click_count += 1
     db.commit()
 
     redis_client.set(short_code, url_entry.long_url, ex=3600)
 
-    return {"long_url": url_entry.long_url, "source": "database" }
+    return {"long_url": url_entry.long_url, "source": "database"}
 
 @router.delete("/{short_code}")
 def delete_url(short_code: str, db: Session = Depends(get_db)):
